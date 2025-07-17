@@ -1,0 +1,177 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: order-system-postgres
+    environment:
+      POSTGRES_DB: order_system
+      POSTGRES_USER: orderuser
+      POSTGRES_PASSWORD: orderpass123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./setup-database.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orderuser -d order_system"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: order-system-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: orderuser
+      RABBITMQ_DEFAULT_PASS: orderpass123
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway
+    environment:
+      - GATEWAY_PORT=8080
+      - ORDER_SERVICE_URL=http://order-creation-service:8081
+      - PAYMENT_SERVICE_URL=http://payment-processing-service:8082
+      - STOCK_SERVICE_URL=http://stock-reservation-service:8083
+      - SHIPPING_SERVICE_URL=http://shipping-service:8084
+      - ORDER_STATUS_URL=http://order-status-service:8085
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      order-creation-service:
+        condition: service_started
+      payment-processing-service:
+        condition: service_started
+      stock-reservation-service:
+        condition: service_started
+      shipping-service:
+        condition: service_started
+      order-status-service:
+        condition: service_started
+    restart: unless-stopped
+
+  # Order Creation Service
+  order-creation-service:
+    build:
+      context: ./api
+      dockerfile: order-creation-service/Dockerfile
+    container_name: order-creation-service
+    environment:
+      - RABBITMQ_URL=amqp://orderuser:orderpass123@rabbitmq:5672/
+      - DATABASE_URL=postgres://orderuser:orderpass123@postgres:5432/order_system?sslmode=disable
+      - PORT=8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Payment Processing Service
+  payment-processing-service:
+    build:
+      context: ./api
+      dockerfile: payment-processing-service/Dockerfile
+    container_name: payment-processing-service
+    environment:
+      - RABBITMQ_URL=amqp://orderuser:orderpass123@rabbitmq:5672/
+      - DATABASE_URL=postgres://orderuser:orderpass123@postgres:5432/order_system?sslmode=disable
+      - PORT=8082
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Stock Reservation Service
+  stock-reservation-service:
+    build:
+      context: ./api
+      dockerfile: stock-reservation-service/Dockerfile
+    container_name: stock-reservation-service
+    environment:
+      - RABBITMQ_URL=amqp://orderuser:orderpass123@rabbitmq:5672/
+      - DATABASE_URL=postgres://orderuser:orderpass123@postgres:5432/order_system?sslmode=disable
+      - PORT=8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Shipping Service
+  shipping-service:
+    build:
+      context: ./api
+      dockerfile: shipping-service/Dockerfile
+    container_name: shipping-service
+    environment:
+      - RABBITMQ_URL=amqp://orderuser:orderpass123@rabbitmq:5672/
+      - DATABASE_URL=postgres://orderuser:orderpass123@postgres:5432/order_system?sslmode=disable
+      - PORT=8084
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Order Status Update Service
+  order-status-service:
+    build:
+      context: ./api
+      dockerfile: order-status-service/Dockerfile
+    container_name: order-status-service
+    environment:
+      - RABBITMQ_URL=amqp://orderuser:orderpass123@rabbitmq:5672/
+      - DATABASE_URL=postgres://orderuser:orderpass123@postgres:5432/order_system?sslmode=disable
+      - PORT=8085
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Frontend React App
+  frontend:
+    build:
+      context: ./order-processing-system
+      dockerfile: Dockerfile
+    container_name: order-system-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+# Volumes for persistent data
+volumes:
+  postgres_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
