@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import './App.css';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import AuthForm from './components/AuthForm';
 
 interface Product {
   id: string;
@@ -24,7 +26,8 @@ interface Order {
 
 const API_BASE_URL = 'http://localhost:8080/api/v1';
 
-function App() {
+function MainApp() {
+  const { user, logout, isAuthenticated, token } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -33,17 +36,30 @@ function App() {
   const [notification, setNotification] = useState<string>('');
 
   useEffect(() => {
-    fetchProducts();
-    fetchOrders();
-  }, []);
+    if (isAuthenticated) {
+      fetchProducts();
+      fetchOrders();
+    }
+  }, [isAuthenticated]);
+
+  const getAuthHeaders = () => {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': token ? `Bearer ${token}` : '',
+    };
+  };
 
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/products`);
+      const response = await fetch(`${API_BASE_URL}/products`, {
+        headers: getAuthHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         setProducts(data);
+      } else if (response.status === 401) {
+        logout();
       }
     } catch (error) {
       showNotification('Ürünler yüklenirken hata oluştu');
@@ -53,10 +69,20 @@ function App() {
   };
 
   const fetchOrders = async () => {
+    if (!user?.id) {
+      console.error('User ID not available');
+      return;
+    }
+
     try {
-      const storedOrders = localStorage.getItem('orders');
-      if (storedOrders) {
-        setOrders(JSON.parse(storedOrders));
+      const response = await fetch(`${API_BASE_URL}/orders?user_id=${user.id}`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setOrders(data || []);
+      } else if (response.status === 401) {
+        logout();
       }
     } catch (error) {
       console.error('Siparişler yüklenirken hata:', error);
@@ -64,22 +90,23 @@ function App() {
   };
 
   const addToCart = (product: Product) => {
-    setCart(prevCart => {
-      const existingItem = prevCart.find(item => item.id === product.id);
+    setCart(currentCart => {
+      const existingItem = currentCart.find(item => item.id === product.id);
       if (existingItem) {
-        return prevCart.map(item =>
+        return currentCart.map(item =>
           item.id === product.id
-            ? { ...item, quantity: Math.min(item.quantity + 1, product.stock_quantity) }
+            ? { ...item, quantity: item.quantity + 1 }
             : item
         );
       }
-      return [...prevCart, { ...product, quantity: 1 }];
+      return [...currentCart, { ...product, quantity: 1 }];
     });
-    showNotification(`${product.name} sepete eklendi`);
+    showNotification(`${product.name} sepete eklendi!`);
   };
 
   const removeFromCart = (productId: string) => {
-    setCart(prevCart => prevCart.filter(item => item.id !== productId));
+    setCart(currentCart => currentCart.filter(item => item.id !== productId));
+    showNotification('Ürün sepetten kaldırıldı');
   };
 
   const updateCartQuantity = (productId: string, quantity: number) => {
@@ -87,9 +114,9 @@ function App() {
       removeFromCart(productId);
       return;
     }
-    
-    setCart(prevCart =>
-      prevCart.map(item =>
+
+    setCart(currentCart =>
+      currentCart.map(item =>
         item.id === productId ? { ...item, quantity } : item
       )
     );
@@ -99,45 +126,51 @@ function App() {
     return cart.reduce((total, item) => total + (item.price * item.quantity), 0);
   };
 
-  const createOrder = async () => {
+  const handleOrderSubmit = async () => {
+    if (!user) {
+      showNotification('Sipariş vermek için giriş yapmalısınız');
+      return;
+    }
+
     if (cart.length === 0) {
-      showNotification('Sepetiniz boş');
+      showNotification('Sepetiniz boş!');
       return;
     }
 
     try {
       setLoading(true);
       const orderData = {
-        user_id: 'demo-user-' + Date.now(),
+        user_id: user.id,
+        customer_email: user.email,
         items: cart.map(item => ({
           product_id: item.id,
-          quantity: item.quantity
-        }))
+          quantity: item.quantity,
+          price: item.price
+        })),
+        total_amount: calculateTotal()
       };
 
       const response = await fetch(`${API_BASE_URL}/orders`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData)
+        headers: getAuthHeaders(),
+        body: JSON.stringify(orderData),
       });
 
       if (response.ok) {
-        const order = await response.json();
-        const newOrders = [...orders, order];
-        setOrders(newOrders);
-        localStorage.setItem('orders', JSON.stringify(newOrders));
+        const result = await response.json();
+        showNotification(`Sipariş başarıyla oluşturuldu! Sipariş ID: ${result.order_id}`);
         setCart([]);
         setActiveTab('orders');
-        showNotification('Sipariş başarıyla oluşturuldu!');
-        fetchProducts(); // Refresh products to update stock
+        await fetchOrders();
+      } else if (response.status === 401) {
+        logout();
       } else {
-        const error = await response.json();
-        showNotification(error.error || 'Sipariş oluşturulurken hata oluştu');
+        const errorData = await response.json();
+        showNotification(`Sipariş oluşturulamadı: ${errorData.message || 'Bilinmeyen hata'}`);
       }
     } catch (error) {
-      showNotification('Bağlantı hatası oluştu');
+      showNotification('Sipariş gönderilirken hata oluştu');
+      console.error('Order submission error:', error);
     } finally {
       setLoading(false);
     }
@@ -147,6 +180,17 @@ function App() {
     setNotification(message);
     setTimeout(() => setNotification(''), 3000);
   };
+
+  const handleLogout = () => {
+    logout();
+    setCart([]);
+    setOrders([]);
+    setProducts([]);
+  };
+
+  if (!isAuthenticated) {
+    return <AuthForm />;
+  }
 
   const getStatusColor = (status: string) => {
     const statusColors: { [key: string]: string } = {
@@ -193,6 +237,17 @@ function App() {
               Siparişlerim ({orders.length})
             </button>
           </nav>
+          <div className="user-info">
+            <span className="user-name">
+              Hoş geldin, {user?.first_name} {user?.last_name}
+            </span>
+            <button 
+              className="logout-button"
+              onClick={handleLogout}
+            >
+              Çıkış
+            </button>
+          </div>
         </div>
       </header>
 
@@ -293,7 +348,7 @@ function App() {
                     </div>
                     <button 
                       className="checkout-btn"
-                      onClick={createOrder}
+                      onClick={handleOrderSubmit}
                       disabled={loading}
                     >
                       Siparişi Tamamla
@@ -320,9 +375,9 @@ function App() {
               ) : (
                 <div className="orders-list">
                   {orders.map(order => (
-                    <div key={order.order_id} className="order-card">
+                    <div key={order.order_id || 'unknown'} className="order-card">
                       <div className="order-header">
-                        <div className="order-id">#{order.order_id.slice(-8)}</div>
+                        <div className="order-id">#{order.order_id ? order.order_id.slice(-8) : 'UNKNOWN'}</div>
                         <div 
                           className="order-status"
                           style={{ backgroundColor: getStatusColor(order.status) }}
@@ -352,4 +407,10 @@ function App() {
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
+  );
+}

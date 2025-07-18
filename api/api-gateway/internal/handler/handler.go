@@ -14,6 +14,7 @@ import (
 type Handler struct {
 	config             *config.Config
 	orderCreationProxy *httputil.ReverseProxy
+	authServiceProxy   *httputil.ReverseProxy
 }
 
 func New(cfg *config.Config) *Handler {
@@ -21,14 +22,35 @@ func New(cfg *config.Config) *Handler {
 	orderCreationURL, _ := url.Parse(cfg.Proxy.OrderCreationURL)
 	orderCreationProxy := httputil.NewSingleHostReverseProxy(orderCreationURL)
 
+	// Create reverse proxy for auth service
+	authServiceURL, _ := url.Parse(cfg.Proxy.AuthServiceURL)
+	authServiceProxy := httputil.NewSingleHostReverseProxy(authServiceURL)
+
 	// Configure proxy with timeout
 	orderCreationProxy.Transport = &http.Transport{
 		ResponseHeaderTimeout: cfg.Proxy.Timeout,
 	}
 
-	// Configure proxy to handle CORS headers properly
+	authServiceProxy.Transport = &http.Transport{
+		ResponseHeaderTimeout: cfg.Proxy.Timeout,
+	}
+
+	// Configure proxy to handle headers properly
 	orderCreationProxy.ModifyResponse = func(resp *http.Response) error {
-		// Remove CORS headers from backend response since API Gateway handles them
+		// Remove any CORS headers from backend to prevent duplicates
+		resp.Header.Del("Access-Control-Allow-Origin")
+		resp.Header.Del("Access-Control-Allow-Credentials")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Allow-Headers")
+		resp.Header.Del("Access-Control-Max-Age")
+		
+		// Add test header to verify ModifyResponse works
+		resp.Header.Set("X-Proxy-Modified", "true")
+		return nil
+	}
+
+	authServiceProxy.ModifyResponse = func(resp *http.Response) error {
+		// Remove any CORS headers from backend to prevent duplicates
 		resp.Header.Del("Access-Control-Allow-Origin")
 		resp.Header.Del("Access-Control-Allow-Credentials")
 		resp.Header.Del("Access-Control-Allow-Methods")
@@ -43,6 +65,7 @@ func New(cfg *config.Config) *Handler {
 	return &Handler{
 		config:             cfg,
 		orderCreationProxy: orderCreationProxy,
+		authServiceProxy:   authServiceProxy,
 	}
 }
 
@@ -91,13 +114,12 @@ func (h *Handler) Metrics(c *gin.Context) {
 }
 
 func (h *Handler) ProxyToOrderCreation(c *gin.Context) {
+	// Set CORS headers
+	h.setCORSHeaders(c)
+	
 	// Handle CORS preflight
 	if c.Request.Method == "OPTIONS" {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-		c.Header("Access-Control-Max-Age", "86400")
-		c.Status(204)
+		c.AbortWithStatus(http.StatusOK)
 		return
 	}
 
@@ -105,47 +127,8 @@ func (h *Handler) ProxyToOrderCreation(c *gin.Context) {
 	c.Request.Header.Set("X-Forwarded-By", "api-gateway")
 	c.Request.Header.Set("X-Request-ID", c.GetString("RequestID"))
 
-	// Create a custom response writer to handle duplicates
-	writer := &cleanResponseWriter{
-		ResponseWriter: c.Writer,
-		headers:        make(map[string]string),
-	}
-
-	// Set CORS headers only once
-	writer.headers["Access-Control-Allow-Origin"] = "*"
-	writer.headers["Access-Control-Allow-Credentials"] = "true"
-
-	// Proxy the request
-	h.orderCreationProxy.ServeHTTP(writer, c.Request)
-}
-
-// cleanResponseWriter prevents duplicate headers
-type cleanResponseWriter struct {
-	http.ResponseWriter
-	headers map[string]string
-	written bool
-}
-
-func (w *cleanResponseWriter) Header() http.Header {
-	return w.ResponseWriter.Header()
-}
-
-func (w *cleanResponseWriter) WriteHeader(statusCode int) {
-	if !w.written {
-		// Set our clean headers
-		for key, value := range w.headers {
-			w.ResponseWriter.Header().Set(key, value)
-		}
-		w.written = true
-	}
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (w *cleanResponseWriter) Write(data []byte) (int, error) {
-	if !w.written {
-		w.WriteHeader(200)
-	}
-	return w.ResponseWriter.Write(data)
+	// Proxy the request directly
+	h.orderCreationProxy.ServeHTTP(c.Writer, c.Request)
 }
 
 func (h *Handler) checkServiceHealth(serviceURL string) string {
@@ -164,4 +147,79 @@ func (h *Handler) checkServiceHealth(serviceURL string) string {
 	}
 
 	return "unhealthy"
+}
+
+func (h *Handler) setCORSHeaders(c *gin.Context) {
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Credentials", "true")
+	c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Accept, X-Requested-With")
+	c.Header("Access-Control-Max-Age", "86400")
+}
+
+// Auth service proxy methods
+func (h *Handler) AuthRegister(c *gin.Context) {
+	h.setCORSHeaders(c)
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	// Rewrite path from /api/v1/auth/register to /auth/register
+	c.Request.URL.Path = "/auth/register"
+	h.authServiceProxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (h *Handler) AuthLogin(c *gin.Context) {
+	h.setCORSHeaders(c)
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	// Rewrite path from /api/v1/auth/login to /auth/login
+	c.Request.URL.Path = "/auth/login"
+	h.authServiceProxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (h *Handler) AuthRefresh(c *gin.Context) {
+	h.setCORSHeaders(c)
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	// Rewrite path from /api/v1/auth/refresh to /auth/refresh
+	c.Request.URL.Path = "/auth/refresh"
+	h.authServiceProxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (h *Handler) AuthLogout(c *gin.Context) {
+	h.setCORSHeaders(c)
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	// Rewrite path from /api/v1/auth/logout to /auth/logout
+	c.Request.URL.Path = "/auth/logout"
+	h.authServiceProxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (h *Handler) AuthValidate(c *gin.Context) {
+	h.setCORSHeaders(c)
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	// Rewrite path from /api/v1/auth/validate to /auth/validate
+	c.Request.URL.Path = "/auth/validate"
+	h.authServiceProxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func (h *Handler) AuthProfile(c *gin.Context) {
+	h.setCORSHeaders(c)
+	if c.Request.Method == "OPTIONS" {
+		c.AbortWithStatus(http.StatusOK)
+		return
+	}
+	// Rewrite path from /api/v1/auth/profile to /auth/profile
+	c.Request.URL.Path = "/auth/profile"
+	h.authServiceProxy.ServeHTTP(c.Writer, c.Request)
 } 

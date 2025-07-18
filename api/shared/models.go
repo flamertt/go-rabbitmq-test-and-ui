@@ -4,7 +4,7 @@ import "time"
 
 // Order represents the main order entity
 type Order struct {
-	ID          string    `json:"id" db:"id"`
+	ID          string    `json:"order_id" db:"id"`
 	UserID      string    `json:"user_id" db:"user_id"`
 	TotalAmount float64   `json:"total_amount" db:"total_amount"`
 	Status      string    `json:"status" db:"status"`

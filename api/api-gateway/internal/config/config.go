@@ -34,6 +34,7 @@ type ProxyConfig struct {
 	StockURL          string
 	ShippingURL       string
 	OrderStatusURL    string
+	AuthServiceURL    string
 	Timeout           time.Duration
 }
 
@@ -66,6 +67,7 @@ func Load() *Config {
 			StockURL:         getEnv("STOCK_URL", "http://stock-reservation-service:8083"),
 			ShippingURL:      getEnv("SHIPPING_URL", "http://shipping-service:8084"),
 			OrderStatusURL:   getEnv("ORDER_STATUS_URL", "http://order-status-service:8085"),
+			AuthServiceURL:   getEnv("AUTH_SERVICE_URL", "http://auth-service:8086"),
 			Timeout:          getEnvAsDuration("PROXY_TIMEOUT", "30s"),
 		},
 		Auth: AuthConfig{

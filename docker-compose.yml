@@ -51,6 +51,7 @@ services:
       - STOCK_SERVICE_URL=http://stock-reservation-service:8083
       - SHIPPING_SERVICE_URL=http://shipping-service:8084
       - ORDER_STATUS_URL=http://order-status-service:8085
+      - AUTH_SERVICE_URL=http://auth-service:8086
     ports:
       - "8080:8080"
     depends_on:
@@ -67,6 +68,8 @@ services:
       shipping-service:
         condition: service_started
       order-status-service:
+        condition: service_started
+      auth-service:
         condition: service_started
     restart: unless-stopped
 
@@ -152,6 +155,26 @@ services:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./api
+      dockerfile: auth-service/Dockerfile
+    container_name: auth-service
+    environment:
+      - DATABASE_URL=postgres://orderuser:orderpass123@postgres:5432/order_system?sslmode=disable
+      - PORT=8086
+      - JWT_SECRET=order-system-jwt-secret-key-2024-very-secure
+      - JWT_EXPIRATION_HOURS=24
+      - REFRESH_EXPIRATION_DAYS=7
+      - BCRYPT_COST=12
+    ports:
+      - "8086:8086"
+    depends_on:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 

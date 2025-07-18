@@ -77,6 +77,7 @@ func (a *App) setupRouter(h *handler.Handler) {
 		{
 			orders.OPTIONS("", h.ProxyToOrderCreation)        // preflight for POST /orders
 			orders.OPTIONS("/:id", h.ProxyToOrderCreation)   // preflight for GET /orders/:id
+			orders.GET("", h.ProxyToOrderCreation)           // GET all orders
 			orders.POST("", h.ProxyToOrderCreation)
 			orders.GET("/:id", h.ProxyToOrderCreation)
 		}
@@ -86,6 +87,24 @@ func (a *App) setupRouter(h *handler.Handler) {
 		api.OPTIONS("/products/:id", h.ProxyToOrderCreation) // preflight for GET /products/:id
 		api.GET("/products", h.ProxyToOrderCreation)
 		api.GET("/products/:id", h.ProxyToOrderCreation)
+
+		// Auth routes
+		auth := api.Group("/auth")
+		{
+			auth.OPTIONS("/register", h.AuthRegister)
+			auth.OPTIONS("/login", h.AuthLogin) 
+			auth.OPTIONS("/refresh", h.AuthRefresh)
+			auth.OPTIONS("/logout", h.AuthLogout)
+			auth.OPTIONS("/validate", h.AuthValidate)
+			auth.OPTIONS("/profile", h.AuthProfile)
+			
+			auth.POST("/register", h.AuthRegister)
+			auth.POST("/login", h.AuthLogin)
+			auth.POST("/refresh", h.AuthRefresh)
+			auth.POST("/logout", h.AuthLogout)
+			auth.POST("/validate", h.AuthValidate)
+			auth.GET("/profile", h.AuthProfile)
+		}
 	}
 
 	a.router = r

@@ -16,6 +16,7 @@ var (
 type OrderRepository interface {
 	CreateOrder(ctx context.Context, order *shared.Order) error
 	GetOrder(ctx context.Context, orderID string) (*shared.Order, error)
+	GetOrders(ctx context.Context, userID string) ([]shared.Order, error)
 	GetProducts(ctx context.Context) ([]shared.Product, error)
 	GetProduct(ctx context.Context, productID string) (*shared.Product, error)
 }
@@ -96,6 +97,33 @@ func (r *orderRepository) GetOrder(ctx context.Context, orderID string) (*shared
 
 	order.Items = items
 	return &order, nil
+}
+
+func (r *orderRepository) GetOrders(ctx context.Context, userID string) ([]shared.Order, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, user_id, total_amount, status, created_at, updated_at FROM orders WHERE user_id = $1 ORDER BY created_at DESC",
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []shared.Order
+	for rows.Next() {
+		var order shared.Order
+		err := rows.Scan(&order.ID, &order.UserID, &order.TotalAmount, &order.Status, &order.CreatedAt, &order.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return orders, nil
 }
 
 func (r *orderRepository) GetProducts(ctx context.Context) ([]shared.Product, error) {

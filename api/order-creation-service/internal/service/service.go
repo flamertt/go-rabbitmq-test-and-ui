@@ -13,6 +13,7 @@ import (
 type OrderService interface {
 	CreateOrder(ctx context.Context, req *CreateOrderRequest) (*CreateOrderResponse, error)
 	GetOrder(ctx context.Context, orderID string) (*shared.Order, error)
+	GetOrders(ctx context.Context, userID string) ([]shared.Order, error)
 	GetProducts(ctx context.Context) ([]shared.Product, error)
 	GetProduct(ctx context.Context, productID string) (*shared.Product, error)
 }
@@ -119,6 +120,10 @@ func (s *orderService) CreateOrder(ctx context.Context, req *CreateOrderRequest)
 
 func (s *orderService) GetOrder(ctx context.Context, orderID string) (*shared.Order, error) {
 	return s.repo.GetOrder(ctx, orderID)
+}
+
+func (s *orderService) GetOrders(ctx context.Context, userID string) ([]shared.Order, error) {
+	return s.repo.GetOrders(ctx, userID)
 }
 
 func (s *orderService) GetProducts(ctx context.Context) ([]shared.Product, error) {

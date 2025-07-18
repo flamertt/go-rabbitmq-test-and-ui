@@ -53,6 +53,22 @@ func (h *Handler) GetOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+func (h *Handler) GetOrders(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id query parameter is required"})
+		return
+	}
+
+	orders, err := h.service.GetOrders(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get orders"})
+		return
+	}
+
+	c.JSON(http.StatusOK, orders)
+}
+
 func (h *Handler) GetProducts(c *gin.Context) {
 	products, err := h.service.GetProducts(c.Request.Context())
 	if err != nil {

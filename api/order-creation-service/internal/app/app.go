@@ -73,6 +73,7 @@ func (a *App) setupRouter(h *handler.Handler) {
 	// API routes
 	api := r.Group("/api/v1")
 	{
+		api.GET("/orders", h.GetOrders)
 		api.POST("/orders", h.CreateOrder)
 		api.GET("/orders/:id", h.GetOrder)
 		api.GET("/products", h.GetProducts)
