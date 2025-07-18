@@ -2,7 +2,9 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
+	"go-rabbitmq-order-system/order-creation-service/internal/repository"
 	"go-rabbitmq-order-system/order-creation-service/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -70,13 +72,57 @@ func (h *Handler) GetOrders(c *gin.Context) {
 }
 
 func (h *Handler) GetProducts(c *gin.Context) {
-	products, err := h.service.GetProducts(c.Request.Context())
+	// Parse pagination parameters
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	sortBy := c.DefaultQuery("sort_by", "created_at")
+	sortDir := c.DefaultQuery("sort_dir", "desc")
+
+	// Parse filter parameters
+	search := c.Query("search")
+	category := c.Query("category")
+	
+	var minPrice, maxPrice *float64
+	if minPriceStr := c.Query("min_price"); minPriceStr != "" {
+		if val, err := strconv.ParseFloat(minPriceStr, 64); err == nil {
+			minPrice = &val
+		}
+	}
+	if maxPriceStr := c.Query("max_price"); maxPriceStr != "" {
+		if val, err := strconv.ParseFloat(maxPriceStr, 64); err == nil {
+			maxPrice = &val
+		}
+	}
+
+	// Validate parameters
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	filter := &repository.ProductsFilter{
+		Search:   search,
+		Category: category,
+		MinPrice: minPrice,
+		MaxPrice: maxPrice,
+	}
+
+	pagination := &repository.PaginationParams{
+		Page:     page,
+		PageSize: pageSize,
+		SortBy:   sortBy,
+		SortDir:  sortDir,
+	}
+
+	response, err := h.service.GetProducts(c.Request.Context(), filter, pagination)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get products"})
 		return
 	}
 
-	c.JSON(http.StatusOK, products)
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) GetProduct(c *gin.Context) {

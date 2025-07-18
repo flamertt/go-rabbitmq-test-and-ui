@@ -24,6 +24,23 @@ interface Order {
   created_at?: string;
 }
 
+interface PaginatedResponse {
+  data: Product[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
+interface ProductFilters {
+  search: string;
+  category: string;
+  minPrice: string;
+  maxPrice: string;
+  sortBy: string;
+  sortDir: string;
+}
+
 const API_BASE_URL = 'http://localhost:8080/api/v1';
 
 function MainApp() {
@@ -34,13 +51,29 @@ function MainApp() {
   const [loading, setLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'products' | 'cart' | 'orders'>('products');
   const [notification, setNotification] = useState<string>('');
+  
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize] = useState<number>(20);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalProducts, setTotalProducts] = useState<number>(0);
+  
+  // Filter states
+  const [filters, setFilters] = useState<ProductFilters>({
+    search: '',
+    category: '',
+    minPrice: '',
+    maxPrice: '',
+    sortBy: 'created_at',
+    sortDir: 'desc'
+  });
 
   useEffect(() => {
     if (isAuthenticated) {
       fetchProducts();
       fetchOrders();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentPage, filters]);
 
   const getAuthHeaders = () => {
     return {
@@ -49,20 +82,47 @@ function MainApp() {
     };
   };
 
+  const buildProductsUrl = () => {
+    const params = new URLSearchParams({
+      page: currentPage.toString(),
+      page_size: pageSize.toString(),
+      sort_by: filters.sortBy,
+      sort_dir: filters.sortDir
+    });
+
+    if (filters.search) params.append('search', filters.search);
+    if (filters.category) params.append('category', filters.category);
+    if (filters.minPrice) params.append('min_price', filters.minPrice);
+    if (filters.maxPrice) params.append('max_price', filters.maxPrice);
+
+    return `${API_BASE_URL}/products?${params.toString()}`;
+  };
+
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/products`, {
+      const response = await fetch(buildProductsUrl(), {
         headers: getAuthHeaders(),
       });
       if (response.ok) {
-        const data = await response.json();
-        setProducts(data);
+        const data: PaginatedResponse = await response.json();
+        setProducts(data.data || []);
+        setTotalPages(data.total_pages || 1);
+        setTotalProducts(data.total || 0);
       } else if (response.status === 401) {
         logout();
+      } else {
+        showNotification('Ürünler yüklenirken hata oluştu');
+        setProducts([]);
+        setTotalPages(1);
+        setTotalProducts(0);
       }
     } catch (error) {
+      console.error('Products fetch error:', error);
       showNotification('Ürünler yüklenirken hata oluştu');
+      setProducts([]);
+      setTotalPages(1);
+      setTotalProducts(0);
     } finally {
       setLoading(false);
     }
@@ -262,9 +322,92 @@ function MainApp() {
 
           {activeTab === 'products' && (
             <section className="section">
-              <h2 className="section-title">Ürünler</h2>
+              <div className="products-header">
+                <h2 className="section-title">Ürünler</h2>
+                <div className="products-stats">
+                  <span>{totalProducts} ürün bulundu</span>
+                  <span>Sayfa {currentPage} / {totalPages}</span>
+                </div>
+              </div>
+
+              {/* Filter and Search Controls */}
+              <div className="products-filters">
+                <div className="search-box">
+                  <input
+                    type="text"
+                    placeholder="Ürün adı veya açıklama ara..."
+                    value={filters.search}
+                    onChange={(e) => {
+                      setFilters(prev => ({ ...prev, search: e.target.value }));
+                      setCurrentPage(1);
+                    }}
+                    className="search-input"
+                  />
+                </div>
+                
+                <div className="filter-controls">
+                  <div className="price-filters">
+                    <input
+                      type="number"
+                      placeholder="Min fiyat"
+                      value={filters.minPrice}
+                      onChange={(e) => {
+                        setFilters(prev => ({ ...prev, minPrice: e.target.value }));
+                        setCurrentPage(1);
+                      }}
+                      className="price-input"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Max fiyat"
+                      value={filters.maxPrice}
+                      onChange={(e) => {
+                        setFilters(prev => ({ ...prev, maxPrice: e.target.value }));
+                        setCurrentPage(1);
+                      }}
+                      className="price-input"
+                    />
+                  </div>
+
+                  <select
+                    value={`${filters.sortBy}-${filters.sortDir}`}
+                    onChange={(e) => {
+                      const [sortBy, sortDir] = e.target.value.split('-');
+                      setFilters(prev => ({ ...prev, sortBy, sortDir }));
+                    }}
+                    className="sort-select"
+                  >
+                    <option value="created_at-desc">En Yeni</option>
+                    <option value="created_at-asc">En Eski</option>
+                    <option value="price-asc">Fiyat: Düşük → Yüksek</option>
+                    <option value="price-desc">Fiyat: Yüksek → Düşük</option>
+                    <option value="name-asc">İsim: A → Z</option>
+                    <option value="name-desc">İsim: Z → A</option>
+                    <option value="stock-desc">Stok: Çok → Az</option>
+                    <option value="stock-asc">Stok: Az → Çok</option>
+                  </select>
+
+                  <button
+                    onClick={() => {
+                      setFilters({
+                        search: '',
+                        category: '',
+                        minPrice: '',
+                        maxPrice: '',
+                        sortBy: 'created_at',
+                        sortDir: 'desc'
+                      });
+                      setCurrentPage(1);
+                    }}
+                    className="clear-filters-btn"
+                  >
+                    Filtreleri Temizle
+                  </button>
+                </div>
+              </div>
+
               <div className="products-grid">
-                {products.map(product => (
+                {products && products.length > 0 ? products.map(product => (
                   <div key={product.id} className="product-card">
                     <div className="product-header">
                       <h3 className="product-name">{product.name}</h3>
@@ -284,8 +427,79 @@ function MainApp() {
                       </button>
                     </div>
                   </div>
-                ))}
+                )) : (
+                  <div className="empty-state">
+                    <p>Hiç ürün bulunamadı</p>
+                    {loading && <p>Yükleniyor...</p>}
+                  </div>
+                )}
               </div>
+
+              {/* Pagination Controls */}
+              {totalPages && totalPages > 1 && (
+                <div className="pagination">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="pagination-btn"
+                  >
+                    ⏮ İlk
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="pagination-btn"
+                  >
+                    ⬅ Önceki
+                  </button>
+                  
+                  <div className="pagination-info">
+                    {Math.max(1, currentPage - 2) !== 1 && (
+                      <>
+                        <button onClick={() => setCurrentPage(1)} className="pagination-number">1</button>
+                        {Math.max(1, currentPage - 2) > 2 && <span className="pagination-dots">...</span>}
+                      </>
+                    )}
+                    
+                    {Array.from(
+                      { length: Math.min(5, totalPages || 1) },
+                      (_, i) => Math.max(1, currentPage - 2) + i
+                    )
+                      .filter(page => page <= (totalPages || 1))
+                      .map(page => (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`pagination-number ${page === currentPage ? 'active' : ''}`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                    
+                    {Math.min(totalPages || 1, currentPage + 2) !== (totalPages || 1) && (totalPages || 1) > 5 && (
+                      <>
+                        {Math.min(totalPages || 1, currentPage + 2) < (totalPages || 1) - 1 && <span className="pagination-dots">...</span>}
+                        <button onClick={() => setCurrentPage(totalPages || 1)} className="pagination-number">{totalPages}</button>
+                      </>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages || 1, prev + 1))}
+                    disabled={currentPage === (totalPages || 1)}
+                    className="pagination-btn"
+                  >
+                    Sonraki ➡
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages || 1)}
+                    disabled={currentPage === (totalPages || 1)}
+                    className="pagination-btn"
+                  >
+                    Son ⏭
+                  </button>
+                </div>
+              )}
             </section>
           )}
 

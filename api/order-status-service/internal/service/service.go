@@ -76,8 +76,12 @@ func (s *OrderStatusService) updateOrderStatus(orderID, status string, event sha
 	var currentStatus string
 	err := s.db.QueryRow("SELECT status FROM orders WHERE id = $1", orderID).Scan(&currentStatus)
 	if err != nil {
-		log.Printf("Order not found: %s", orderID)
-		return err
+		if err == sql.ErrNoRows {
+			log.Printf("Order %s not found, skipping status update", orderID)
+			return nil // Don't requeue if order doesn't exist
+		}
+		log.Printf("Failed to get current order status: %v", err)
+		return nil // Don't requeue on DB errors
 	}
 
 	// Check if status update is valid
@@ -90,7 +94,8 @@ func (s *OrderStatusService) updateOrderStatus(orderID, status string, event sha
 	// Start transaction
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		log.Printf("Failed to start transaction: %v", err)
+		return nil
 	}
 	defer tx.Rollback()
 
@@ -102,7 +107,8 @@ func (s *OrderStatusService) updateOrderStatus(orderID, status string, event sha
 	`, status, time.Now(), orderID)
 	
 	if err != nil {
-		return err
+		log.Printf("Failed to update order status: %v", err)
+		return nil
 	}
 
 	// Log status change if audit logging is enabled

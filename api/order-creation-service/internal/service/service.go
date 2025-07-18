@@ -14,7 +14,7 @@ type OrderService interface {
 	CreateOrder(ctx context.Context, req *CreateOrderRequest) (*CreateOrderResponse, error)
 	GetOrder(ctx context.Context, orderID string) (*shared.Order, error)
 	GetOrders(ctx context.Context, userID string) ([]shared.Order, error)
-	GetProducts(ctx context.Context) ([]shared.Product, error)
+	GetProducts(ctx context.Context, filter *repository.ProductsFilter, pagination *repository.PaginationParams) (*repository.PaginatedResponse, error)
 	GetProduct(ctx context.Context, productID string) (*shared.Product, error)
 }
 
@@ -126,8 +126,8 @@ func (s *orderService) GetOrders(ctx context.Context, userID string) ([]shared.O
 	return s.repo.GetOrders(ctx, userID)
 }
 
-func (s *orderService) GetProducts(ctx context.Context) ([]shared.Product, error) {
-	return s.repo.GetProducts(ctx)
+func (s *orderService) GetProducts(ctx context.Context, filter *repository.ProductsFilter, pagination *repository.PaginationParams) (*repository.PaginatedResponse, error) {
+	return s.repo.GetProducts(ctx, filter, pagination)
 }
 
 func (s *orderService) GetProduct(ctx context.Context, productID string) (*shared.Product, error) {

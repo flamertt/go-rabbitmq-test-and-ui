@@ -61,8 +61,12 @@ func (s *ShippingService) checkReadyForShipping(orderID string) error {
 	`, orderID).Scan(&orderStatus, &totalAmount)
 	
 	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("Order %s not found, skipping", orderID)
+			return nil // Don't requeue if order doesn't exist
+		}
 		log.Printf("Failed to get order status: %v", err)
-		return err
+		return nil // Don't requeue on other DB errors either
 	}
 
 	// Check payment status
@@ -74,8 +78,12 @@ func (s *ShippingService) checkReadyForShipping(orderID string) error {
 	`, orderID).Scan(&paymentTransactionStatus)
 	
 	if err != nil {
-		log.Printf("Payment not found for order %s", orderID)
-		return nil // Payment might not be processed yet
+		if err == sql.ErrNoRows {
+			log.Printf("Payment not found for order %s, skipping", orderID)
+			return nil // Payment might not be processed yet
+		}
+		log.Printf("Failed to check payment status: %v", err)
+		return nil
 	}
 
 	// Check stock reservation
@@ -88,7 +96,7 @@ func (s *ShippingService) checkReadyForShipping(orderID string) error {
 	
 	if err != nil {
 		log.Printf("Failed to check stock reservations: %v", err)
-		return err
+		return nil
 	}
 
 	// If both payment and stock reservation are successful, proceed with shipping
