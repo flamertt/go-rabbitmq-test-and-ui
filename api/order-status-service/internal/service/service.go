@@ -128,34 +128,151 @@ func (s *OrderStatusService) updateOrderStatus(orderID, status string, event sha
 	}
 
 	// Commit transaction
-	return tx.Commit()
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	// Check if order is ready for shipping after successful update
+	go s.checkReadyForShipping(orderID)
+
+	return nil
+}
+
+// checkReadyForShipping checks if order has both payment successful and stock reserved
+// and automatically transitions to READY_FOR_SHIPPING
+func (s *OrderStatusService) checkReadyForShipping(orderID string) {
+	// Get current order status
+	var currentStatus string
+	err := s.db.QueryRow("SELECT status FROM orders WHERE id = $1", orderID).Scan(&currentStatus)
+	if err != nil {
+		log.Printf("Failed to check order status for shipping readiness: %v", err)
+		return
+	}
+
+	// Check if both payment and stock are successful
+	// We need to verify that we have records of both successful operations
+	if currentStatus == shared.StatusPaymentSuccessful || currentStatus == shared.StatusStockReserved {
+		// Check if we have both payment transaction and stock reservation
+		var paymentExists, stockExists bool
+		
+		// Check payment transaction
+		err = s.db.QueryRow(`
+			SELECT EXISTS(SELECT 1 FROM payment_transactions 
+			WHERE order_id = $1 AND status = 'SUCCESS')
+		`, orderID).Scan(&paymentExists)
+		
+		if err != nil {
+			log.Printf("Failed to check payment status: %v", err)
+			return
+		}
+
+		// Check stock reservation
+		err = s.db.QueryRow(`
+			SELECT EXISTS(SELECT 1 FROM stock_reservations 
+			WHERE order_id = $1 AND status = 'RESERVED')
+		`, orderID).Scan(&stockExists)
+		
+		if err != nil {
+			log.Printf("Failed to check stock reservation: %v", err)
+			return
+		}
+
+		// If both exist, update to READY_FOR_SHIPPING
+		if paymentExists && stockExists {
+			_, err = s.db.Exec(`
+				UPDATE orders 
+				SET status = $1, updated_at = $2 
+				WHERE id = $3 AND status IN ($4, $5)
+			`, shared.StatusReadyForShipping, time.Now(), orderID, 
+				shared.StatusPaymentSuccessful, shared.StatusStockReserved)
+			
+			if err != nil {
+				log.Printf("Failed to update order to ready for shipping: %v", err)
+				return
+			}
+
+			log.Printf("Order %s is now ready for shipping", orderID)
+			
+			// Publish ready for shipping event
+			event := shared.OrderEvent{
+				EventType: shared.EventOrderReadyForShipping,
+				OrderID:   orderID,
+				Status:    shared.StatusReadyForShipping,
+				Timestamp: time.Now(),
+			}
+			
+			err = s.rabbitMQ.PublishEvent(event)
+			if err != nil {
+				log.Printf("Failed to publish ready for shipping event: %v", err)
+			}
+		}
+	}
 }
 
 func (s *OrderStatusService) isValidStatusTransition(currentStatus, newStatus string) bool {
-	// Define status priority to prevent backward updates
-	statusPriority := map[string]int{
-		shared.StatusCreated:           1,
-		shared.StatusPaymentPending:    2,
-		shared.StatusPaymentSuccessful: 3,
-		shared.StatusStockReserved:     4,
-		shared.StatusReadyForShipping:  5,
-		shared.StatusShipped:           6,
-		shared.StatusDelivered:         7,
-		shared.StatusPaymentFailed:     -1, // Special status
-		shared.StatusStockInsufficient: -2, // Special status
-		shared.StatusCancelled:         -3, // Special status
+	// Define valid status transitions instead of using priority system
+	// since payment and stock operations happen in parallel
+	
+	validTransitions := map[string][]string{
+		shared.StatusCreated: {
+			shared.StatusPaymentSuccessful,
+			shared.StatusStockReserved,
+			shared.StatusPaymentFailed,
+			shared.StatusStockInsufficient,
+			shared.StatusCancelled,
+		},
+		shared.StatusPaymentSuccessful: {
+			shared.StatusStockReserved,
+			shared.StatusReadyForShipping,
+			shared.StatusStockInsufficient,
+			shared.StatusCancelled,
+		},
+		shared.StatusStockReserved: {
+			shared.StatusPaymentSuccessful,
+			shared.StatusReadyForShipping,
+			shared.StatusPaymentFailed,
+			shared.StatusCancelled,
+		},
+		shared.StatusReadyForShipping: {
+			shared.StatusShipped,
+			shared.StatusCancelled,
+		},
+		shared.StatusShipped: {
+			shared.StatusDelivered,
+			shared.StatusCancelled,
+		},
+		shared.StatusPaymentFailed: {
+			shared.StatusCancelled,
+		},
+		shared.StatusStockInsufficient: {
+			shared.StatusCancelled,
+		},
+		shared.StatusDelivered: {},
+		shared.StatusCancelled: {},
 	}
 
-	currentPriority, currentExists := statusPriority[currentStatus]
-	newPriority, newExists := statusPriority[newStatus]
-
-	if !currentExists || !newExists {
-		log.Printf("Unknown status found: current=%s, new=%s", currentStatus, newStatus)
+	// Check if transition is valid
+	allowedStatuses, exists := validTransitions[currentStatus]
+	if !exists {
+		log.Printf("Unknown current status: %s", currentStatus)
 		return false
 	}
 
-	// Allow updates for failure statuses or higher priority statuses
-	return newPriority < 0 || (newPriority > currentPriority && currentPriority >= 0)
+	// Allow transition if new status is in allowed list
+	for _, allowedStatus := range allowedStatuses {
+		if newStatus == allowedStatus {
+			return true
+		}
+	}
+
+	// Allow same status updates (idempotent)
+	if currentStatus == newStatus {
+		return true
+	}
+
+	log.Printf("Invalid transition: %s -> %s", currentStatus, newStatus)
+	return false
 }
 
 func (s *OrderStatusService) logStatusChange(tx *sql.Tx, change StatusChange) error {
